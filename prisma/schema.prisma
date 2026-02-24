@@ -1,0 +1,190 @@
+// ============================================================
+// Prisma Schema - Sistema de Facturación Electrónica Ecuador
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum InvoiceEstado {
+  DRAFT       // Creada, pendiente de procesamiento
+  SIGNED      // XML firmado digitalmente
+  SENT        // Enviada al SRI (recepción confirmada)
+  AUTHORIZED  // Autorizada por el SRI
+  REJECTED    // Rechazada por el SRI
+  ERROR       // Error en el proceso
+}
+
+enum Ambiente {
+  TEST  // Ambiente de pruebas SRI
+  PROD  // Ambiente de producción SRI
+}
+
+enum TipoComprobante {
+  FACTURA          // 01
+  NOTA_CREDITO     // 04
+  NOTA_DEBITO      // 05
+  GUIA_REMISION    // 06
+  RETENCION        // 07
+}
+
+enum TipoIdentificacion {
+  RUC       // 04
+  CEDULA    // 05
+  PASAPORTE // 06
+  CONSUMIDOR_FINAL // 07
+}
+
+// ============================================================
+// EMPRESA (Tenant único)
+// ============================================================
+
+model Company {
+  id                      String   @id @default(uuid())
+  razonSocial             String
+  nombreComercial         String
+  ruc                     String   @unique
+  dirMatriz               String
+  dirEstablecimiento      String
+  contribuyenteEspecial   String?
+  obligadoContabilidad    String   @default("SI") // SI | NO
+  establecimiento         String   @default("001")
+  puntoEmision            String   @default("001")
+  logoPath                String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@map("companies")
+}
+
+// ============================================================
+// SECUENCIAL DE FACTURAS (por ambiente)
+// ============================================================
+
+model InvoiceSequence {
+  id        String   @id @default(uuid())
+  ambiente  Ambiente @unique
+  current   Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("invoice_sequences")
+}
+
+// ============================================================
+// FACTURA ELECTRONICA
+// ============================================================
+
+model Invoice {
+  id          String          @id @default(uuid())
+  dealId      String          // ID del deal en Bitrix24
+  secuencial  String?         // "000000001" - asignado al procesar
+
+  // Clave de acceso SRI (49 dígitos) - única por factura
+  claveAcceso String?         @unique
+
+  // Estado del flujo
+  estado      InvoiceEstado   @default(DRAFT)
+  ambiente    Ambiente
+
+  // Tipo de comprobante
+  tipoComprobante TipoComprobante @default(FACTURA)
+
+  // Fecha de emisión (puede diferir de createdAt)
+  fechaEmision DateTime?
+
+  // ---- Datos del comprador ----
+  tipoIdentificacionComprador TipoIdentificacion?
+  razonSocialComprador        String?
+  identificacionComprador     String?
+  emailComprador              String?
+  telefonoComprador           String?
+
+  // ---- Totales ----
+  totalSinImpuestos   Decimal?  @db.Decimal(10, 2)
+  totalDescuento      Decimal?  @db.Decimal(10, 2) @default(0)
+  totalIva            Decimal?  @db.Decimal(10, 2)
+  importeTotal        Decimal?  @db.Decimal(10, 2)
+
+  // ---- XML (almacenado en DB para auditoría) ----
+  xmlGenerado  String?  @db.Text // XML sin firma
+  xmlFirmado   String?  @db.Text // XML con firma XAdES-BES
+
+  // ---- PDF / RIDE ----
+  pdfPath      String?
+
+  // ---- Respuesta SRI ----
+  sriResponse  Json?    // Respuesta completa del SRI
+  errorMessage String?  @db.Text
+
+  // ---- Metadata ----
+  authorizedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relaciones
+  items        InvoiceItem[]
+  auditLogs    InvoiceAuditLog[]
+
+  @@index([dealId])
+  @@index([estado])
+  @@index([ambiente, estado])
+  @@map("invoices")
+}
+
+// ============================================================
+// ITEMS DE FACTURA
+// ============================================================
+
+model InvoiceItem {
+  id        String  @id @default(uuid())
+  invoiceId String
+
+  // Identificación del producto/servicio
+  codigoPrincipal         String
+  codigoAuxiliar          String?
+  descripcion             String
+
+  // Cantidades y precios
+  cantidad                Decimal  @db.Decimal(10, 4)
+  precioUnitario          Decimal  @db.Decimal(10, 4)
+  descuento               Decimal  @db.Decimal(10, 2) @default(0)
+  precioTotalSinImpuesto  Decimal  @db.Decimal(10, 2)
+
+  // IVA
+  ivaCodigo               String   @default("2")   // 2 = IVA
+  ivaCodigoPorcentaje     String   @default("4")   // 4 = 15%
+  ivaTarifa               Decimal  @db.Decimal(5, 2) @default(15.00)
+  ivaBaseImponible        Decimal  @db.Decimal(10, 2)
+  ivaValor                Decimal  @db.Decimal(10, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+// ============================================================
+// AUDIT LOG DE FACTURAS
+// ============================================================
+
+model InvoiceAuditLog {
+  id        String        @id @default(uuid())
+  invoiceId String
+  estado    InvoiceEstado
+  message   String?
+  metadata  Json?
+  createdAt DateTime      @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_audit_logs")
+}
