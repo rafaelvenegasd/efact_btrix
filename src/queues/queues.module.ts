@@ -27,6 +27,8 @@ import { InvoiceModule } from '../invoice/invoice.module';
           port: configService.get<number>('redis.port', 6379),
           password:
             configService.get<string>('redis.password') || undefined,
+          // TLS requerido para Upstash y Redis Cloud
+          ...(configService.get<boolean>('redis.tls') ? { tls: {} } : {}),
           // Configuración de retry para conexiones Redis
           maxRetriesPerRequest: null,
           enableReadyCheck: false,

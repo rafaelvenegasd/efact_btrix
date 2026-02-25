@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:20-bookworm-slim AS base
 WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build
 
 # ---- API Server ----
-FROM node:20-alpine AS api
+FROM node:20-bookworm-slim AS api
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=base /app/node_modules ./node_modules
@@ -22,7 +22,7 @@ EXPOSE 3000
 CMD ["node", "dist/main"]
 
 # ---- Worker ----
-FROM node:20-alpine AS worker
+FROM node:20-bookworm-slim AS worker
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=base /app/node_modules ./node_modules
